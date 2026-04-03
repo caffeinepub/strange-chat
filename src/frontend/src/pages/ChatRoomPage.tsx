@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import type { Message } from "../backend";
 import { getBackend } from "../backend-instance";
 import { GlassNav } from "../components/GlassNav";
+import { useVideoCall } from "../hooks/useVideoCall";
 import { useVoiceCall } from "../hooks/useVoiceCall";
 
 // ── Incoming Call Overlay ─────────────────────────────────────────────────────────────────────────
@@ -332,165 +333,438 @@ function ActiveCallBar({
   );
 }
 
-// ── Video Call Overlay ───────────────────────────────────────────────────────────────────
-function VideoCallOverlay({ onEnd }: { onEnd: () => void }) {
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const [micOn, setMicOn] = useState(true);
-  const [camOn, setCamOn] = useState(true);
-  const streamRef = useRef<MediaStream | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        if (!active) {
-          for (const t of stream.getTracks()) t.stop();
-          return;
-        }
-        streamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      })
-      .catch(() => toast.error("Camera/mic permission required"));
-    return () => {
-      active = false;
-      if (streamRef.current)
-        for (const t of streamRef.current.getTracks()) t.stop();
-    };
-  }, []);
-
-  const toggleMic = () => {
-    if (streamRef.current) {
-      for (const t of streamRef.current.getAudioTracks()) t.enabled = !micOn;
-    }
-    setMicOn((v) => !v);
-  };
-
-  const toggleCam = () => {
-    if (streamRef.current) {
-      for (const t of streamRef.current.getVideoTracks()) t.enabled = !camOn;
-    }
-    setCamOn((v) => !v);
-  };
-
-  const handleEnd = () => {
-    if (streamRef.current)
-      for (const t of streamRef.current.getTracks()) t.stop();
-    onEnd();
-  };
-
+// ── Incoming Video Call Overlay ─────────────────────────────────────────────────────────────────────
+function IncomingVideoCallOverlay({
+  onAccept,
+  onDecline,
+}: {
+  onAccept: () => void;
+  onDecline: () => void;
+}) {
   return (
-    <div className="video-overlay flex flex-col items-center justify-center p-6">
-      {/* Remote placeholder */}
-      <div
-        className="relative rounded-2xl overflow-hidden mb-4 flex items-center justify-center"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(3,8,16,0.82)", backdropFilter: "blur(8px)" }}
+      data-ocid="videocall.incoming_dialog"
+    >
+      <motion.div
+        initial={{ scale: 0.85, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.85, y: 20 }}
+        transition={{ type: "spring", stiffness: 320, damping: 26 }}
+        className="flex flex-col items-center gap-6 p-10 rounded-3xl"
         style={{
-          width: "100%",
-          maxWidth: 640,
-          height: 360,
-          background: "rgba(8,18,30,0.95)",
-          border: "1px solid rgba(57,214,208,0.18)",
+          background: "rgba(8,18,30,0.92)",
+          border: "1.5px solid rgba(57,214,208,0.30)",
+          boxShadow:
+            "0 0 60px rgba(57,214,208,0.18), 0 0 120px rgba(57,214,208,0.06)",
+          minWidth: 300,
         }}
       >
-        {/* Scan line */}
-        <div
-          className="absolute left-0 right-0 h-1 pointer-events-none"
-          style={{
-            background:
-              "linear-gradient(90deg, transparent, rgba(57,214,208,0.4), transparent)",
-            animation: "video-scan 3s linear infinite",
-            top: 0,
-          }}
-        />
-        <div className="flex flex-col items-center gap-4">
+        {/* Animated ringing icon */}
+        <div className="relative flex items-center justify-center">
+          {[0, 1, 2].map((i) => (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                border: "2px solid rgba(57,214,208,0.35)",
+                width: 60 + i * 28,
+                height: 60 + i * 28,
+              }}
+              animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0, 0.6] }}
+              transition={{
+                duration: 2,
+                repeat: Number.POSITIVE_INFINITY,
+                delay: i * 0.4,
+              }}
+            />
+          ))}
           <div
-            className="w-20 h-20 rounded-full flex items-center justify-center"
+            className="relative z-10 w-16 h-16 rounded-full flex items-center justify-center"
             style={{
-              background: "rgba(57,214,208,0.10)",
-              border: "2px solid rgba(57,214,208,0.30)",
-              boxShadow: "0 0 30px rgba(57,214,208,0.18)",
+              background: "rgba(57,214,208,0.14)",
+              border: "2px solid rgba(57,214,208,0.45)",
+              boxShadow: "0 0 28px rgba(57,214,208,0.30)",
             }}
           >
             <Video
-              className="w-9 h-9"
-              style={{ color: "oklch(0.72 0.14 190)" }}
+              className="w-7 h-7"
+              style={{ color: "oklch(0.75 0.16 188)" }}
             />
           </div>
-          <p className="text-sm" style={{ color: "oklch(0.58 0.025 210)" }}>
-            Waiting for remote video...
+        </div>
+
+        <div className="text-center">
+          <p
+            className="text-xl font-bold mb-1"
+            style={{ color: "oklch(0.88 0.08 195)" }}
+          >
+            Incoming Video Call 📹
+          </p>
+          <p className="text-sm" style={{ color: "oklch(0.55 0.025 210)" }}>
+            Someone in this room wants to video chat
           </p>
         </div>
-      </div>
 
-      {/* Local video pip */}
-      <div
-        className="absolute bottom-24 right-8 rounded-xl overflow-hidden"
+        <div className="flex gap-4">
+          <button
+            type="button"
+            data-ocid="videocall.accept_button"
+            onClick={onAccept}
+            className="flex items-center gap-2 px-7 py-3 rounded-full font-semibold text-sm transition-all active:scale-95"
+            style={{
+              background: "rgba(30,200,80,0.18)",
+              border: "1.5px solid rgba(30,200,80,0.50)",
+              color: "oklch(0.75 0.18 148)",
+              boxShadow: "0 0 20px rgba(30,200,80,0.18)",
+            }}
+          >
+            <Video className="w-4 h-4" /> Accept
+          </button>
+          <button
+            type="button"
+            data-ocid="videocall.decline_button"
+            onClick={onDecline}
+            className="flex items-center gap-2 px-7 py-3 rounded-full font-semibold text-sm transition-all active:scale-95"
+            style={{
+              background: "rgba(220,60,40,0.14)",
+              border: "1.5px solid rgba(220,60,40,0.40)",
+              color: "oklch(0.65 0.22 25)",
+              boxShadow: "0 0 20px rgba(220,60,40,0.12)",
+            }}
+          >
+            <VideoOff className="w-4 h-4" /> Decline
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Outgoing Video Call Overlay ──────────────────────────────────────────────────────────────────────
+function OutgoingVideoCallOverlay({ onCancel }: { onCancel: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(3,8,16,0.78)", backdropFilter: "blur(8px)" }}
+      data-ocid="videocall.calling_dialog"
+    >
+      <motion.div
+        initial={{ scale: 0.88, y: 16 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.88, y: 16 }}
+        transition={{ type: "spring", stiffness: 300, damping: 24 }}
+        className="flex flex-col items-center gap-6 p-10 rounded-3xl"
         style={{
-          width: 160,
-          height: 112,
-          border: "2px solid rgba(57,214,208,0.35)",
+          background: "rgba(8,18,30,0.93)",
+          border: "1.5px solid rgba(57,214,208,0.25)",
+          boxShadow:
+            "0 0 60px rgba(57,214,208,0.15), 0 0 120px rgba(57,214,208,0.05)",
+          minWidth: 300,
         }}
       >
-        <video
-          ref={localVideoRef}
-          autoPlay
-          muted
-          playsInline
-          className="w-full h-full object-cover"
-          style={{ background: "#000" }}
-        />
-        <div
-          className="absolute bottom-1 left-2 text-xs font-medium"
-          style={{ color: "oklch(0.78 0.12 190)" }}
+        {/* Pulsing ring */}
+        <div className="relative flex items-center justify-center">
+          {[0, 1].map((i) => (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                border: "2px solid rgba(57,214,208,0.25)",
+                width: 64 + i * 32,
+                height: 64 + i * 32,
+              }}
+              animate={{ scale: [1, 1.4], opacity: [0.5, 0] }}
+              transition={{
+                duration: 1.6,
+                repeat: Number.POSITIVE_INFINITY,
+                delay: i * 0.6,
+                ease: "easeOut",
+              }}
+            />
+          ))}
+          <motion.div
+            animate={{ scale: [1, 1.08, 1] }}
+            transition={{
+              duration: 1.2,
+              repeat: Number.POSITIVE_INFINITY,
+              ease: "easeInOut",
+            }}
+            className="relative z-10 w-16 h-16 rounded-full flex items-center justify-center"
+            style={{
+              background: "rgba(57,214,208,0.12)",
+              border: "2px solid rgba(57,214,208,0.40)",
+              boxShadow: "0 0 28px rgba(57,214,208,0.25)",
+            }}
+          >
+            <Video
+              className="w-7 h-7"
+              style={{ color: "oklch(0.72 0.14 190)" }}
+            />
+          </motion.div>
+        </div>
+
+        <div className="text-center">
+          <p
+            className="text-xl font-bold mb-1"
+            style={{ color: "oklch(0.88 0.08 195)" }}
+          >
+            Video Calling... 📹
+          </p>
+          <p className="text-sm" style={{ color: "oklch(0.55 0.025 210)" }}>
+            Waiting for the other person to accept
+          </p>
+        </div>
+
+        {/* Animated dots */}
+        <div className="flex gap-2">
+          {[0, 1, 2].map((i) => (
+            <motion.div
+              key={i}
+              className="w-2.5 h-2.5 rounded-full"
+              style={{ background: "oklch(0.72 0.14 190)" }}
+              animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.15, 0.8] }}
+              transition={{
+                duration: 1.2,
+                repeat: Number.POSITIVE_INFINITY,
+                delay: i * 0.25,
+              }}
+            />
+          ))}
+        </div>
+
+        <button
+          type="button"
+          data-ocid="videocall.cancel_button"
+          onClick={onCancel}
+          className="flex items-center gap-2 px-7 py-3 rounded-full font-semibold text-sm transition-all active:scale-95"
+          style={{
+            background: "rgba(220,60,40,0.14)",
+            border: "1.5px solid rgba(220,60,40,0.40)",
+            color: "oklch(0.65 0.22 25)",
+          }}
         >
-          You
+          <VideoOff className="w-4 h-4" /> Cancel
+        </button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Active Video Call Overlay ────────────────────────────────────────────────────────────────────────
+function ActiveVideoCallOverlay({
+  duration,
+  isMuted,
+  isCamOff,
+  onToggleMute,
+  onToggleCamera,
+  onEnd,
+  setLocalStreamCallback,
+  setRemoteStreamCallback,
+}: {
+  duration: string;
+  isMuted: boolean;
+  isCamOff: boolean;
+  onToggleMute: () => void;
+  onToggleCamera: () => void;
+  onEnd: () => void;
+  setLocalStreamCallback: (cb: (stream: MediaStream) => void) => void;
+  setRemoteStreamCallback: (cb: (stream: MediaStream) => void) => void;
+}) {
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const [hasRemote, setHasRemote] = useState(false);
+
+  useEffect(() => {
+    setLocalStreamCallback((stream) => {
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+    });
+    setRemoteStreamCallback((stream) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+      }
+      setHasRemote(true);
+    });
+  }, [setLocalStreamCallback, setRemoteStreamCallback]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{ background: "rgba(2,6,14,0.96)", backdropFilter: "blur(12px)" }}
+      data-ocid="videocall.active_panel"
+    >
+      {/* Remote video — takes most of screen */}
+      <div className="relative flex-1 flex items-center justify-center">
+        {hasRemote ? (
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className="w-full h-full object-cover"
+            style={{ maxHeight: "calc(100vh - 120px)" }}
+          >
+            <track kind="captions" />
+          </video>
+        ) : (
+          <div className="flex flex-col items-center gap-5">
+            <motion.div
+              animate={{ scale: [1, 1.08, 1] }}
+              transition={{ duration: 1.8, repeat: Number.POSITIVE_INFINITY }}
+              className="w-24 h-24 rounded-full flex items-center justify-center"
+              style={{
+                background: "rgba(57,214,208,0.10)",
+                border: "2px solid rgba(57,214,208,0.30)",
+                boxShadow: "0 0 40px rgba(57,214,208,0.18)",
+              }}
+            >
+              <Video
+                className="w-10 h-10"
+                style={{ color: "oklch(0.72 0.14 190)" }}
+              />
+            </motion.div>
+            <p
+              className="text-base font-medium"
+              style={{ color: "oklch(0.60 0.025 210)" }}
+            >
+              Waiting for remote video...
+            </p>
+          </div>
+        )}
+
+        {/* Local video PiP — bottom-right corner */}
+        <div
+          className="absolute bottom-4 right-4 rounded-2xl overflow-hidden"
+          style={{
+            width: 160,
+            height: 112,
+            border: "2px solid rgba(57,214,208,0.45)",
+            boxShadow: "0 4px 24px rgba(0,0,0,0.55)",
+            background: "#000",
+          }}
+        >
+          <video
+            ref={localVideoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-full object-cover"
+          />
+          <div
+            className="absolute bottom-1.5 left-2 text-xs font-semibold"
+            style={{ color: "rgba(255,255,255,0.80)" }}
+          >
+            You
+          </div>
+        </div>
+
+        {/* Timer top-center */}
+        <div
+          className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-1.5 rounded-full"
+          style={{
+            background: "rgba(8,18,30,0.75)",
+            border: "1px solid rgba(57,214,208,0.22)",
+          }}
+        >
+          <motion.div
+            className="w-2 h-2 rounded-full"
+            style={{ background: "oklch(0.72 0.20 148)" }}
+            animate={{ opacity: [1, 0.3, 1] }}
+            transition={{ duration: 1.2, repeat: Number.POSITIVE_INFINITY }}
+          />
+          <Timer
+            className="w-3.5 h-3.5"
+            style={{ color: "oklch(0.65 0.10 148)" }}
+          />
+          <span
+            className="text-sm font-mono font-semibold"
+            style={{ color: "oklch(0.80 0.14 148)" }}
+          >
+            {duration}
+          </span>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex items-center gap-4 mt-2">
+      {/* Controls bar */}
+      <div
+        className="flex items-center justify-center gap-4 py-5 px-6"
+        style={{
+          background: "rgba(8,18,30,0.92)",
+          borderTop: "1px solid rgba(57,214,208,0.18)",
+        }}
+      >
+        {/* Mute toggle */}
         <button
           type="button"
-          onClick={toggleMic}
-          className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+          data-ocid="videocall.mute_toggle"
+          onClick={onToggleMute}
+          className="w-14 h-14 rounded-full flex items-center justify-center transition-all active:scale-95"
           style={{
-            background: micOn
-              ? "rgba(57,214,208,0.12)"
-              : "rgba(220,60,40,0.15)",
-            border: `2px solid ${micOn ? "rgba(57,214,208,0.35)" : "rgba(220,60,40,0.40)"}`,
-            color: micOn ? "oklch(0.72 0.14 190)" : "oklch(0.65 0.22 25)",
+            background: isMuted
+              ? "rgba(220,60,40,0.18)"
+              : "rgba(57,214,208,0.10)",
+            border: `2px solid ${isMuted ? "rgba(220,60,40,0.45)" : "rgba(57,214,208,0.30)"}`,
+            color: isMuted ? "oklch(0.65 0.22 25)" : "oklch(0.72 0.14 190)",
           }}
+          title={isMuted ? "Unmute" : "Mute"}
         >
-          {micOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-        </button>
-        <button
-          type="button"
-          onClick={toggleCam}
-          className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
-          style={{
-            background: camOn
-              ? "rgba(57,214,208,0.12)"
-              : "rgba(220,60,40,0.15)",
-            border: `2px solid ${camOn ? "rgba(57,214,208,0.35)" : "rgba(220,60,40,0.40)"}`,
-            color: camOn ? "oklch(0.72 0.14 190)" : "oklch(0.65 0.22 25)",
-          }}
-        >
-          {camOn ? (
-            <Video className="w-5 h-5" />
+          {isMuted ? (
+            <MicOff className="w-5 h-5" />
           ) : (
-            <VideoOff className="w-5 h-5" />
+            <Mic className="w-5 h-5" />
           )}
         </button>
+
+        {/* Camera toggle */}
         <button
           type="button"
-          onClick={handleEnd}
-          className="btn-danger flex items-center gap-2 px-6 py-3"
+          data-ocid="videocall.camera_toggle"
+          onClick={onToggleCamera}
+          className="w-14 h-14 rounded-full flex items-center justify-center transition-all active:scale-95"
+          style={{
+            background: isCamOff
+              ? "rgba(220,60,40,0.18)"
+              : "rgba(57,214,208,0.10)",
+            border: `2px solid ${isCamOff ? "rgba(220,60,40,0.45)" : "rgba(57,214,208,0.30)"}`,
+            color: isCamOff ? "oklch(0.65 0.22 25)" : "oklch(0.72 0.14 190)",
+          }}
+          title={isCamOff ? "Turn Camera On" : "Turn Camera Off"}
         >
-          <VideoOff className="w-4 h-4" />
-          End Video
+          {isCamOff ? (
+            <VideoOff className="w-5 h-5" />
+          ) : (
+            <Video className="w-5 h-5" />
+          )}
+        </button>
+
+        {/* End video call */}
+        <button
+          type="button"
+          data-ocid="videocall.end_button"
+          onClick={onEnd}
+          className="flex items-center gap-2 px-8 py-3 rounded-full font-semibold text-sm transition-all active:scale-95"
+          style={{
+            background: "rgba(220,60,40,0.20)",
+            border: "2px solid rgba(220,60,40,0.50)",
+            color: "oklch(0.65 0.22 25)",
+            boxShadow: "0 0 24px rgba(220,60,40,0.18)",
+          }}
+        >
+          <VideoOff className="w-5 h-5" /> End Video
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -1225,13 +1499,13 @@ export function ChatRoomPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [videoActive, setVideoActive] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const myName = localStorage.getItem("strangechat_username") || "You";
   const myDisplayName = localStorage.getItem("sc_username") || myName;
   const myAvatar = localStorage.getItem("sc_avatar") || "";
   const call = useVoiceCall(roomCode);
+  const videoCall = useVideoCall(roomCode);
 
   useEffect(() => {
     const fetch = async () => {
@@ -1277,9 +1551,6 @@ export function ChatRoomPage() {
 
   return (
     <>
-      {/* Video Call Overlay */}
-      {videoActive && <VideoCallOverlay onEnd={() => setVideoActive(false)} />}
-
       {/* Voice Call Overlays */}
       <AnimatePresence>
         {call.callState === "incoming" && (
@@ -1290,6 +1561,31 @@ export function ChatRoomPage() {
         )}
         {call.callState === "calling" && (
           <OutgoingCallOverlay onCancel={call.endCall} />
+        )}
+      </AnimatePresence>
+
+      {/* Video Call Overlays */}
+      <AnimatePresence>
+        {videoCall.videoCallState === "incoming" && (
+          <IncomingVideoCallOverlay
+            onAccept={videoCall.acceptVideoCall}
+            onDecline={videoCall.declineVideoCall}
+          />
+        )}
+        {videoCall.videoCallState === "calling" && (
+          <OutgoingVideoCallOverlay onCancel={videoCall.endVideoCall} />
+        )}
+        {videoCall.videoCallState === "active" && (
+          <ActiveVideoCallOverlay
+            duration={videoCall.fmtDuration(videoCall.callDuration)}
+            isMuted={videoCall.isMuted}
+            isCamOff={videoCall.isCamOff}
+            onToggleMute={videoCall.toggleMute}
+            onToggleCamera={videoCall.toggleCamera}
+            onEnd={videoCall.endVideoCall}
+            setLocalStreamCallback={videoCall.setLocalStreamCallback}
+            setRemoteStreamCallback={videoCall.setRemoteStreamCallback}
+          />
         )}
       </AnimatePresence>
 
@@ -1432,20 +1728,23 @@ export function ChatRoomPage() {
                     <Phone className="w-4 h-4" /> Call
                   </button>
                 )}
-                {/* Video call button */}
-                <button
-                  type="button"
-                  onClick={() => setVideoActive(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold transition-all"
-                  style={{
-                    background: "rgba(57,214,208,0.12)",
-                    border: "1.5px solid rgba(57,214,208,0.30)",
-                    color: "oklch(0.72 0.14 190)",
-                  }}
-                  title="Video Call"
-                >
-                  <Video className="w-4 h-4" /> Video
-                </button>
+                {/* Video call button — only when idle */}
+                {videoCall.videoCallState === "idle" && (
+                  <button
+                    type="button"
+                    data-ocid="videocall.start_button"
+                    onClick={videoCall.startVideoCall}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold transition-all active:scale-95"
+                    style={{
+                      background: "rgba(57,214,208,0.12)",
+                      border: "1.5px solid rgba(57,214,208,0.30)",
+                      color: "oklch(0.72 0.14 190)",
+                    }}
+                    title="Start Video Call"
+                  >
+                    <Video className="w-4 h-4" /> Video
+                  </button>
+                )}
                 <button
                   type="button"
                   data-ocid="chat.leave_button"
